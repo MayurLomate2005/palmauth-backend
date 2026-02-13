@@ -37,16 +37,10 @@ def create_app():
     # Enable CORS
     # -------------------------
     CORS(
-        app,
-        origins=[
-            Config.FRONTEND_URL,
-            "http://localhost:5173",
-            "http://localhost:3000",
-        ],
-        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization"],
-        supports_credentials=True,
-    )
+    app,
+    resources={r"/api/*": {"origins": "*"}},
+    supports_credentials=True
+)
 
     # -------------------------
     # Initialize Database
