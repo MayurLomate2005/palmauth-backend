@@ -5,6 +5,7 @@ from flask_cors import CORS
 from config import Config
 from models import db
 
+
 # -------------------------
 # Logging Configuration
 # -------------------------
@@ -29,18 +30,24 @@ def create_app():
         )
 
     # -------------------------
-    # Ensure upload folder exists
+    # Ensure Upload Folders Exist
     # -------------------------
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs(Config.UPLOAD_ORIGINAL, exist_ok=True)
+    os.makedirs(Config.UPLOAD_DETECTED, exist_ok=True)
+    os.makedirs(Config.UPLOAD_ROI, exist_ok=True)
+    os.makedirs(Config.UPLOAD_FEATURES, exist_ok=True)
 
     # -------------------------
-    # Enable CORS
+    # Enable Proper CORS
     # -------------------------
     CORS(
-    app,
-    resources={r"/api/*": {"origins": "*"}},
-    supports_credentials=True
-)
+        app,
+        resources={r"/api/*": {"origins": "*"}},
+        allow_headers=["Content-Type", "Authorization"],
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        supports_credentials=True,
+    )
 
     # -------------------------
     # Initialize Database
@@ -63,25 +70,25 @@ def create_app():
     app.register_blueprint(users_bp, url_prefix="/api")
 
     # -------------------------
-    # Root Route (Fix 404)
+    # Root Route
     # -------------------------
     @app.route("/")
     def home():
         return {
             "message": "PalmAuth Backend Running 🚀",
             "status": "ok",
-            "version": "1.0.0"
+            "version": "1.0.0",
         }
 
     # -------------------------
-    # Health Check Route
+    # Health Route
     # -------------------------
     @app.route("/api/health")
     def health():
         return {
             "status": "healthy",
             "service": "PalmAuth Backend",
-            "version": "1.0.0"
+            "version": "1.0.0",
         }
 
     # -------------------------
@@ -98,9 +105,7 @@ def create_app():
 # Create app instance
 app = create_app()
 
-# -------------------------
-# Local Development Run
-# -------------------------
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     debug_mode = os.getenv("FLASK_ENV") != "production"
