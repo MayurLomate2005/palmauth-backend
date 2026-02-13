@@ -226,3 +226,59 @@ def authenticate():
     except Exception as e:
         logger.error(f"Authentication error: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+@auth_bp.route("/api/authenticate", methods=["POST"])
+def authenticate():
+    try:
+        data = request.get_json()
+        image_data = data.get("image")
+
+        if not image_data:
+            return jsonify({"error": "Palm image required"}), 400
+
+        image = decode_image(image_data)
+        uid = f"auth_{uuid.uuid4().hex[:8]}"
+
+        # Run pipeline
+        result = process_pipeline(image, uid, current_app)
+        if not result["success"]:
+            return jsonify({"error": result["error"]}), 400
+
+        query_embedding = np.array(result["embedding"]).reshape(1, -1)
+
+        users = User.query.all()
+
+        best_match = None
+        best_score = 0
+
+        for user in users:
+            stored_embedding = np.array(user.get_embedding()).reshape(1, -1)
+            similarity = cosine_similarity(query_embedding, stored_embedding)[0][0]
+
+            if similarity > best_score:
+                best_score = similarity
+                best_match = user
+
+        threshold = current_app.config.get("SIMILARITY_THRESHOLD", 0.85)
+
+        if best_match and best_score >= threshold:
+            return jsonify({
+                "matched": True,
+                "similarity": float(best_score),
+                "user": best_match.to_dict(),
+                **result["images"]
+            }), 200
+
+        return jsonify({
+            "matched": False,
+            "similarity": float(best_score)
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
