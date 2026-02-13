@@ -5,12 +5,13 @@ import os
 import uuid
 import base64
 import logging
+from sklearn.metrics.pairwise import cosine_similarity
+
 from models import db, User
 from services.palm_detection import detect_palm
 from services.roi_extraction import extract_roi
 from services.feature_visualization import visualize_features
 from services.feature_extraction import extract_embedding
-from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,10 @@ def decode_image(data: str) -> np.ndarray:
 def image_to_base64(path: str) -> str:
     with open(path, "rb") as f:
         encoded = base64.b64encode(f.read()).decode("utf-8")
-    return f"data:image/jpeg;base64,{encoded}"
+
+    ext = path.rsplit(".", 1)[-1].lower()
+    mime = "image/png" if ext == "png" else "image/jpeg"
+    return f"data:{mime};base64,{encoded}"
 
 
 def process_pipeline(image: np.ndarray, uid: str, app) -> dict:
@@ -43,18 +47,16 @@ def process_pipeline(image: np.ndarray, uid: str, app) -> dict:
 
     det_path = os.path.join(config["UPLOAD_DETECTED"], f"{uid}.jpg")
     detection = detect_palm(image, det_path)
-
     if not detection["success"]:
         return {"success": False, "error": detection["error"]}
 
     roi_path = os.path.join(config["UPLOAD_ROI"], f"{uid}.jpg")
     roi_result = extract_roi(image, detection["bbox"], roi_path)
-
     if not roi_result["success"]:
         return {"success": False, "error": roi_result["error"]}
 
     feat_path = os.path.join(config["UPLOAD_FEATURES"], f"{uid}.jpg")
-    visualize_features(roi_path, feat_path)
+    feat_result = visualize_features(roi_path, feat_path)
 
     emb_result = extract_embedding(
         roi_result["roi_image"],
@@ -71,16 +73,17 @@ def process_pipeline(image: np.ndarray, uid: str, app) -> dict:
             "original_image": image_to_base64(orig_path),
             "detected_image": image_to_base64(det_path),
             "roi_image": image_to_base64(roi_path),
-            "feature_image": image_to_base64(feat_path),
+            "feature_image": image_to_base64(feat_path) if feat_result["success"] else None,
         },
     }
 
 
 # --------------------------------------------------
-# REGISTER
+# REGISTER ROUTE
+# Final URL → /api/register
 # --------------------------------------------------
 
-@auth_bp.route("/api/register", methods=["POST"])
+@auth_bp.route("/register", methods=["POST"])
 def register():
     try:
         data = request.get_json()
@@ -90,38 +93,42 @@ def register():
         images = data.get("images", [])
 
         if not name or not roll_number:
-            return jsonify({"error": "Name and roll_number required"}), 400
+            return jsonify({"error": "Name and roll_number are required"}), 400
 
         if not images:
             return jsonify({"error": "At least one palm image required"}), 400
 
-        if User.query.filter_by(roll_number=roll_number).first():
+        existing = User.query.filter_by(roll_number=roll_number).first()
+        if existing:
             return jsonify({"error": "User already exists"}), 409
 
         embeddings = []
         pipeline_result = None
 
-        for img_data in images:
+        for i, img_data in enumerate(images):
             image = decode_image(img_data)
-            uid = f"{roll_number}_{uuid.uuid4().hex[:8]}"
+            uid = f"{roll_number}_{uuid.uuid4().hex[:8]}_{i}"
 
             result = process_pipeline(image, uid, current_app)
+            if not result["success"]:
+                continue
 
-            if result["success"]:
-                embeddings.append(result["embedding"])
-                if pipeline_result is None:
-                    pipeline_result = result
+            embeddings.append(result["embedding"])
+            if pipeline_result is None:
+                pipeline_result = result
 
         if not embeddings:
             return jsonify({"error": "No valid palm images processed"}), 400
 
         avg_embedding = np.mean(embeddings, axis=0)
-        avg_embedding = avg_embedding / np.linalg.norm(avg_embedding)
+        norm = np.linalg.norm(avg_embedding)
+        if norm > 0:
+            avg_embedding = avg_embedding / norm
 
         user = User(
             name=name,
             roll_number=roll_number,
-            num_samples=len(embeddings)
+            num_samples=len(embeddings),
         )
 
         user.set_embedding(avg_embedding.tolist())
@@ -133,20 +140,21 @@ def register():
             "success": True,
             "message": "Registration successful",
             "user": user.to_dict(),
-            **pipeline_result["images"]
+            **pipeline_result["images"],
         }), 201
 
     except Exception as e:
-        logger.error(str(e), exc_info=True)
+        logger.error(f"Registration error: {str(e)}", exc_info=True)
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 
 # --------------------------------------------------
-# AUTHENTICATE (FINAL CLEAN VERSION)
+# AUTHENTICATE ROUTE
+# Final URL → /api/authenticate
 # --------------------------------------------------
 
-@auth_bp.route("/api/authenticate", methods=["POST"])
+@auth_bp.route("/authenticate", methods=["POST"])
 def authenticate():
     try:
         data = request.get_json()
@@ -159,16 +167,14 @@ def authenticate():
         uid = f"auth_{uuid.uuid4().hex[:8]}"
 
         result = process_pipeline(image, uid, current_app)
-
         if not result["success"]:
             return jsonify({"error": result["error"]}), 400
 
         query_embedding = np.array(result["embedding"]).reshape(1, -1)
 
         users = User.query.all()
-
         if not users:
-            return jsonify({"error": "No registered users"}), 404
+            return jsonify({"error": "No registered users found"}), 404
 
         best_match = None
         best_score = 0
@@ -185,6 +191,7 @@ def authenticate():
 
         if best_match and best_score >= threshold:
             return jsonify({
+                "success": True,
                 "matched": True,
                 "similarity": float(best_score),
                 "user": best_match.to_dict(),
@@ -192,10 +199,11 @@ def authenticate():
             }), 200
 
         return jsonify({
+            "success": True,
             "matched": False,
             "similarity": float(best_score)
         }), 200
 
     except Exception as e:
-        logger.error(str(e), exc_info=True)
+        logger.error(f"Authentication error: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
