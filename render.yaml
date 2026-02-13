@@ -1,14 +1,16 @@
 services:
   - type: web
     name: palmauth-backend
-    runtime: python
+    env: python
     plan: free
-    pythonVersion: 3.10.13
 
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
 
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.13
+
       - key: FLASK_ENV
         value: production
 
@@ -19,15 +21,6 @@ services:
         fromDatabase:
           name: palmauth-db
           property: connectionString
-
-      - key: FRONTEND_URL
-        value: https://your-frontend.lovable.app
-
-      - key: SIMILARITY_THRESHOLD
-        value: "0.85"
-
-      - key: EMBEDDING_DIM
-        value: "128"
 
 databases:
   - name: palmauth-db
