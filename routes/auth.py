@@ -167,12 +167,14 @@ def authenticate():
         uid = f"auth_{uuid.uuid4().hex[:8]}"
 
         result = process_pipeline(image, uid, current_app)
+
         if not result["success"]:
             return jsonify({"error": result["error"]}), 400
 
         query_embedding = np.array(result["embedding"]).reshape(1, -1)
 
         users = User.query.all()
+
         if not users:
             return jsonify({"error": "No registered users found"}), 404
 
@@ -193,7 +195,7 @@ def authenticate():
             return jsonify({
                 "success": True,
                 "matched": True,
-                "similarity": float(best_score),
+                "confidence": float(best_score),
                 "user": best_match.to_dict(),
                 **result["images"]
             }), 200
@@ -201,7 +203,7 @@ def authenticate():
         return jsonify({
             "success": True,
             "matched": False,
-            "similarity": float(best_score)
+            "confidence": float(best_score)
         }), 200
 
     except Exception as e:
